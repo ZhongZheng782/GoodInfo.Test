@@ -88,15 +88,32 @@ async def test_download():
         }""")
 
         if table_html:
-            out_dir = os.path.join(os.getcwd(), "DividendDetail")
-            os.makedirs(out_dir, exist_ok=True)
-            out_file = os.path.join(out_dir, "DividendDetail_2330_台積電.xls")
-            
+            import io
+            import pandas as pd
             clean_html = "<html><head><meta charset='UTF-8'></head><body>" + table_html + "</body></html>"
-            with open(out_file, "w", encoding="utf-8-sig") as f:
-                f.write(clean_html)
-            file_size = os.path.getsize(out_file)
-            print(f"[5/5] SUCCESS! File saved to: {out_file} ({file_size} bytes)")
+            
+            # Pure in-memory parsing via io.StringIO (0 Disk I/O)
+            dfs = pd.read_html(io.StringIO(clean_html))
+            if dfs:
+                df = dfs[0]
+                mem_bytes = df.memory_usage(deep=True).sum()
+                print(f"[5/5] SUCCESS (In-Memory)! Extracted DataFrame: shape={df.shape}, memory={mem_bytes} bytes (Zero Disk I/O)")
+                print("   [In-Memory Preview Top 3 Rows]:")
+                for idx, row in df.iloc[:3, :4].iterrows():
+                    print(f"      Row {idx}: {dict(row)}")
+
+                # Optional disk persistence only if explicitly requested via --save
+                if "--save" in sys.argv:
+                    out_dir = os.path.join(os.getcwd(), "DividendDetail")
+                    os.makedirs(out_dir, exist_ok=True)
+                    out_file = os.path.join(out_dir, "DividendDetail_2330_台積電.xls")
+                    with open(out_file, "w", encoding="utf-8-sig") as f:
+                        f.write(clean_html)
+                    print(f"   [--save] Saved to disk: {out_file} ({os.path.getsize(out_file)} bytes)")
+                return df
+            else:
+                print("[5/5] ERROR: No tables parsed from HTML in memory!")
+                return None
         else:
             print("[5/5] ERROR: Table tblDetail not found!")
             await page.screenshot(path="cdp_failure_screenshot.png", full_page=True)
