@@ -75,16 +75,34 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: raw-scraped-payload
+          path: ./raw-payload/
 
       - name: Generate & Verify XLS File on GitHub-Hosted Disk
         run: |
           python - << 'EOF'
           import os
+          import glob
           import pandas as pd
 
-          payload_file = "dividend_payload.html"
-          if not os.path.exists(payload_file):
-              raise FileNotFoundError(f"Missing {payload_file}")
+          # Check candidate payload paths
+          candidates = [
+              "raw-payload/dividend_payload.html",
+              "dividend_payload.html"
+          ]
+          payload_file = None
+          for c in candidates:
+              if os.path.isfile(c):
+                  payload_file = c
+                  break
+
+          if not payload_file:
+              # Fallback search
+              html_files = glob.glob("**/*payload*.html", recursive=True)
+              if html_files:
+                  payload_file = html_files[0]
+
+          if not payload_file or not os.path.exists(payload_file):
+              raise FileNotFoundError(f"Missing payload file! Checked {candidates}. Current dir contents: {os.listdir('.')}")
 
           with open(payload_file, "r", encoding="utf-8") as f:
               raw_html = f.read()
