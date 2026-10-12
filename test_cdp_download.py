@@ -37,7 +37,18 @@ async def test_download():
             raise ConnectionError(f"Could not connect to any Chromium CDP endpoint in {candidates}")
 
         context = browser.contexts[0]
-        page = await context.new_page()
+        # Check if an existing page is already showing GoodInfo
+        target_page = None
+        for p in context.pages:
+            if "goodinfo.tw" in p.url:
+                target_page = p
+                print(f"   [CDP] Attached to existing GoodInfo tab: {p.url}")
+                break
+
+        if target_page:
+            page = target_page
+        else:
+            page = await context.new_page()
 
         # Apply stealth evasions
         try:
