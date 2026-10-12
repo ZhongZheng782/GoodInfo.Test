@@ -655,11 +655,44 @@ def cdp_download_xls(stock_id, data_type_code, cdp_url):
         else:
             url = f"https://goodinfo.tw/tw/{asp_file}?STOCK_ID={url_stock_id}"
 
-        print(f"🌐 [CDP Mode] Connecting to Chromium CDP at {cdp_url} ...")
+        # Auto-detect candidate CDP URLs: explicit env var, Docker bridge gateway, LAN IP, Tailscale IP, localhost
+        default_candidates = [
+            os.getenv("GOODINFO_CDP_URL"),
+            "http://172.21.0.1:9222",
+            "http://192.168.31.101:9222",
+            "http://100.110.72.104:9222",
+            "http://127.0.0.1:9222"
+        ]
+        candidates = [c for c in default_candidates if c]
+
+        print(f"🌐 [CDP Mode] Connecting to Chromium CDP (candidates: {candidates}) ...")
         async with async_playwright() as p:
-            browser = await p.chromium.connect_over_cdp(cdp_url)
+            browser = None
+            for candidate_url in candidates:
+                try:
+                    browser = await p.chromium.connect_over_cdp(candidate_url, timeout=5000)
+                    print(f"   ✅ [CDP Mode] 連線至 CDP 成功: {candidate_url}")
+                    break
+                except Exception as cdp_err:
+                    pass
+
+            if not browser:
+                print(f"❌ [CDP Mode] 無法連線至任何候選 CDP 端點: {candidates}")
+                return False
+
             context = browser.contexts[0]
-            page = await context.new_page()
+            # Smart Tab Reuse: check if an existing tab is already showing GoodInfo
+            target_page = None
+            for p_tab in context.pages:
+                if "goodinfo.tw" in p_tab.url:
+                    target_page = p_tab
+                    print(f"   📑 [CDP Mode] 重用已開啟的 GoodInfo 分頁: {p_tab.url}")
+                    break
+
+            if target_page:
+                page = target_page
+            else:
+                page = await context.new_page()
 
             # Apply Playwright Stealth evasions to mask automated browser fingerprints
             try:
