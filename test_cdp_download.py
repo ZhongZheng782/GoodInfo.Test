@@ -57,9 +57,17 @@ async def test_download():
 
         url = "https://goodinfo.tw/tw/StockDividendPolicy.asp?STOCK_ID=2330"
         print(f"[2/5] Navigating to {url} ...")
-        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        await page.wait_for_timeout(3000)
-        title = await page.title()
+        
+        for attempt in range(1, 4):
+            print(f"   Navigating attempt {attempt}/3 ...")
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            await page.wait_for_timeout(3000)
+            title = await page.title()
+            print(f"   Attempt {attempt} Title: {title}")
+            if "522" not in title and "523" not in title and "520" not in title and "524" not in title:
+                break
+            print(f"   Origin server transient error ({title}). Waiting 5s before retry...")
+            await asyncio.sleep(5)
         print(f"[3/5] Page title: {title}")
 
         # Handle Cloudflare Challenge (Automatic wait first, fallback to click)
@@ -150,8 +158,12 @@ async def test_download():
             with open("cdp_failure_page.html", "w", encoding="utf-8") as f:
                 f.write(content)
             print("   Saved cdp_failure_screenshot.png and cdp_failure_page.html for diagnosis.")
+            await page.close()
+            sys.exit(1)
 
         await page.close()
 
 if __name__ == "__main__":
-    asyncio.run(test_download())
+    res = asyncio.run(test_download())
+    if res is None:
+        sys.exit(1)
