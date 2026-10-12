@@ -26,8 +26,9 @@ def process():
 
     print(f"Loaded payload ({len(raw_html)} characters).")
 
-    # 1. Parse tables using pandas
-    dfs = pd.read_html(raw_html)
+    # 1. Parse tables using pandas (in-memory StringIO required for pandas 2.0+)
+    import io
+    dfs = pd.read_html(io.StringIO(raw_html))
     if not dfs:
         raise ValueError("No HTML tables found in payload!")
 
