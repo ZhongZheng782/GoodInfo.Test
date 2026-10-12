@@ -1,0 +1,131 @@
+name: Hybrid In-Memory CDP Pipeline
+run-name: Hybrid Scraping & Validation Pipeline (${{ github.ref_name }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      stock_id:
+        description: 'Stock ID to scrape'
+        required: true
+        default: '2330'
+
+jobs:
+  # =========================================================================
+  # Job 1: Self-Hosted Runner on NAS (Residential IP + In-Memory CDP Scraping)
+  # Zero File/XLS I/O on NAS: CDP stream is captured in memory, then
+  # serialized to temporary payload for Artifact transfer.
+  # =========================================================================
+  scrape-cdp-memory:
+    name: Scrape via NAS Residential CDP (In-Memory)
+    runs-on: [self-hosted, ubuntu-latest]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install In-Memory Scraper Dependencies
+        run: |
+          pip install --upgrade pip
+          pip install playwright playwright-stealth pandas beautifulsoup4 lxml
+
+      - name: Execute Pure In-Memory CDP Extraction
+        env:
+          GOODINFO_CDP_URL: "http://192.168.31.101:9222"
+        run: |
+          echo "Starting in-memory CDP scrape targeting CHROMIUM container..."
+          python test_cdp_download.py --export-payload=dividend_payload.html
+          echo "In-memory extraction completed successfully."
+
+      - name: Transfer In-Memory Scraped Payload to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: raw-scraped-payload
+          path: dividend_payload.html
+          retention-days: 1
+
+  # =========================================================================
+  # Job 2: GitHub-Hosted Runner (File I/O, XLS Conversion, Pandas Validation)
+  # All disk write operations and data verification happen on GitHub's cloud.
+  # =========================================================================
+  process-file-io:
+    name: Process File I/O & Validate XLS (GitHub-Hosted)
+    needs: scrape-cdp-memory
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Data Processing Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas beautifulsoup4 lxml html5lib
+
+      - name: Download Scraped Payload Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: raw-scraped-payload
+
+      - name: Generate & Verify XLS File on GitHub-Hosted Disk
+        run: |
+          python - << 'EOF'
+          import os
+          import pandas as pd
+
+          payload_file = "dividend_payload.html"
+          if not os.path.exists(payload_file):
+              raise FileNotFoundError(f"Missing {payload_file}")
+
+          with open(payload_file, "r", encoding="utf-8") as f:
+              raw_html = f.read()
+
+          print(f"Loaded payload ({len(raw_html)} characters).")
+
+          # 1. Parse tables using pandas
+          dfs = pd.read_html(raw_html)
+          if not dfs:
+              raise ValueError("No HTML tables found in payload!")
+
+          df = dfs[0]
+          print("=" * 60)
+          print(f"Table successfully parsed on GitHub Runner!")
+          print(f"Shape: {df.shape[0]} rows, {df.shape[1]} columns")
+          print("=" * 60)
+          print(df.head(5))
+
+          # 2. Perform File I/O: Write to DividendDetail/*.xls and *.csv
+          output_dir = "DividendDetail"
+          os.makedirs(output_dir, exist_ok=True)
+          xls_path = os.path.join(output_dir, "DividendDetail_2330_台積電.xls")
+          csv_path = os.path.join(output_dir, "DividendDetail_2330_台積電.csv")
+
+          with open(xls_path, "w", encoding="utf-8-sig") as f:
+              f.write(raw_html)
+          print(f"Successfully saved XLS file to GitHub Runner: {xls_path} ({os.path.getsize(xls_path)} bytes)")
+
+          df.to_csv(csv_path, index=False, encoding="utf-8-sig")
+          print(f"Successfully saved CSV file to GitHub Runner: {csv_path} ({os.path.getsize(csv_path)} bytes)")
+
+          # 3. Validation check
+          assert df.shape[0] >= 10, f"Expected at least 10 rows, got {df.shape[0]}"
+          print("Verification PASSED!")
+          EOF
+
+      - name: Upload Verified Dividend Files Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-dividend-data
+          path: |
+            DividendDetail/DividendDetail_2330_台積電.xls
+            DividendDetail/DividendDetail_2330_台積電.csv
+          retention-days: 7

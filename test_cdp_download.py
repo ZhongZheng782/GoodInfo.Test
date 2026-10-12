@@ -12,9 +12,30 @@ if platform.system() == "Windows":
         pass
 
 async def test_download():
+    # Detect candidate CDP URLs: explicit env var, Docker bridge gateway, LAN IP, Tailscale IP, localhost
+    default_candidates = [
+        os.environ.get("GOODINFO_CDP_URL"),
+        "http://172.21.0.1:9222",
+        "http://192.168.31.101:9222",
+        "http://100.110.72.104:9222",
+        "http://127.0.0.1:9222"
+    ]
+    candidates = [c for c in default_candidates if c]
+
     async with async_playwright() as p:
-        print("[1/5] Connecting to Chromium CDP at http://192.168.31.101:9222 ...")
-        browser = await p.chromium.connect_over_cdp("http://192.168.31.101:9222")
+        browser = None
+        for candidate_url in candidates:
+            try:
+                print(f"[1/5] Testing Chromium CDP connection at {candidate_url} ...")
+                browser = await p.chromium.connect_over_cdp(candidate_url, timeout=5000)
+                print(f"   Connected successfully to CDP at {candidate_url}")
+                break
+            except Exception as e:
+                print(f"   CDP connection to {candidate_url} failed: {e}")
+
+        if not browser:
+            raise ConnectionError(f"Could not connect to any Chromium CDP endpoint in {candidates}")
+
         context = browser.contexts[0]
         page = await context.new_page()
 
@@ -101,6 +122,14 @@ async def test_download():
                 print("   [In-Memory Preview Top 3 Rows]:")
                 for idx, row in df.iloc[:3, :4].iterrows():
                     print(f"      Row {idx}: {dict(row)}")
+
+                # Export raw payload if requested (for GitHub Actions artifact transfer)
+                for arg in sys.argv:
+                    if arg.startswith("--export-payload="):
+                        payload_path = arg.split("=", 1)[1]
+                        with open(payload_path, "w", encoding="utf-8") as pf:
+                            pf.write(clean_html)
+                        print(f"   [Payload] Exported {len(clean_html)} chars to {payload_path}")
 
                 # Optional disk persistence only if explicitly requested via --save
                 if "--save" in sys.argv:
